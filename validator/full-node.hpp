@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -64,6 +64,8 @@ class FullNodeImpl : public FullNode {
   void download_block_proof_link(BlockIdExt block_id, td::uint32 priority, td::Timestamp timeout,
                                  td::Promise<td::BufferSlice> promise);
   void get_next_key_blocks(BlockIdExt block_id, td::Timestamp timeout, td::Promise<std::vector<BlockIdExt>> promise);
+  void download_archive(BlockSeqno masterchain_seqno, std::string tmp_dir, td::Timestamp timeout,
+                        td::Promise<std::string> promise);
 
   void got_key_block_proof(td::Ref<ProofLink> proof);
   void got_zero_block_state(td::Ref<ShardState> state);
@@ -75,7 +77,8 @@ class FullNodeImpl : public FullNode {
                td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
                td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<dht::Dht> dht,
                td::actor::ActorId<overlay::Overlays> overlays,
-               td::actor::ActorId<ValidatorManagerInterface> validator_manager, std::string db_root);
+               td::actor::ActorId<ValidatorManagerInterface> validator_manager,
+               td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root);
 
  private:
   PublicKeyHash local_id_;
@@ -93,6 +96,7 @@ class FullNodeImpl : public FullNode {
   td::actor::ActorId<dht::Dht> dht_;
   td::actor::ActorId<overlay::Overlays> overlays_;
   td::actor::ActorId<ValidatorManagerInterface> validator_manager_;
+  td::actor::ActorId<adnl::AdnlExtClient> client_;
 
   std::string db_root_;
 

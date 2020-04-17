@@ -9,11 +9,13 @@ set(TONLIB_SOURCE
   tonlib/Config.cpp
   tonlib/ExtClient.cpp
   tonlib/ExtClientLazy.cpp
-  tonlib/GenericAccount.cpp
+  tonlib/ExtClientOutbound.cpp
   tonlib/KeyStorage.cpp
+  tonlib/KeyValue.cpp
   tonlib/LastBlock.cpp
-  tonlib/TestGiver.cpp
-  tonlib/TestWallet.cpp
+  tonlib/LastBlockStorage.cpp
+  tonlib/LastConfig.cpp
+  tonlib/Logging.cpp
   tonlib/TonlibClient.cpp
   tonlib/utils.cpp
 
@@ -21,11 +23,13 @@ set(TONLIB_SOURCE
   tonlib/Config.h
   tonlib/ExtClient.h
   tonlib/ExtClientLazy.h
-  tonlib/GenericAccount.h
+  tonlib/ExtClientOutbound.h
   tonlib/KeyStorage.h
+  tonlib/KeyValue.h
   tonlib/LastBlock.h
-  tonlib/TestGiver.h
-  tonlib/TestWallet.h
+  tonlib/LastBlockStorage.h
+  tonlib/LastConfig.h
+  tonlib/Logging.h
   tonlib/TonlibCallback.h
   tonlib/TonlibClient.h
   tonlib/utils.h
@@ -52,7 +56,7 @@ target_include_directories(tonlib PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>/..
   $<BUILD_INTERFACE:${OPENSSL_INCLUDE_DIR}>
 )
-target_link_libraries(tonlib PRIVATE tdactor adnllite tl_lite_api tl-lite-utils ton_crypto ton_block lite-client-common)
+target_link_libraries(tonlib PRIVATE tdactor adnllite tl_lite_api tl-lite-utils ton_crypto ton_block lite-client-common smc-envelope)
 target_link_libraries(tonlib PUBLIC tdutils tl_tonlib_api)
 
 if (TONLIB_ENABLE_JNI AND NOT ANDROID) # jni is available by default on Android
@@ -68,7 +72,7 @@ add_executable(tonlib-cli tonlib/tonlib-cli.cpp)
 target_link_libraries(tonlib-cli tonlib tdactor tdutils terminal)
 
 if (NOT CMAKE_CROSSCOMPILING)
-  if (TD_ENABLE_JNI)
+  if (TONLIB_ENABLE_JNI)
 	  #FIXME
 	  #add_dependencies(tonlib tonlib_generate_java_api)
   endif()
@@ -119,7 +123,10 @@ install(TARGETS tonlibjson TonlibJson EXPORT Tonlib
 )
 
 if (NOT TON_USE_ABSEIL)
-install(TARGETS tdnet keys crc32c tdactor adnllite tl_api tl-utils tl_lite_api tl-lite-utils ton_crypto ton_block
+if (WIN32)
+  set(WINGETOPT_TARGET wingetopt)
+endif()
+install(TARGETS tdnet keys crc32c tdactor adnllite tl_api tl-utils tl_lite_api tl-lite-utils ton_crypto ton_block smc-envelope ${WINGETOPT_TARGET}
   tdutils tl_tonlib_api tonlib lite-client-common Tonlib EXPORT Tonlib
   LIBRARY DESTINATION lib
   ARCHIVE DESTINATION lib

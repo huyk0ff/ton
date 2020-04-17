@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include <iostream>
 #include <iomanip>
@@ -75,7 +75,7 @@ td::Result<int> CellSerializationInfo::get_bits(td::Slice cell) const {
   if (data_with_bits) {
     DCHECK(data_len != 0);
     int last = cell[data_offset + data_len - 1];
-    if (!last || last == 0x80) {
+    if (!(last & 0x7f)) {
       return td::Status::Error("overlong encoding");
     }
     return td::narrow_cast<int>((data_len - 1) * 8 + 7 - td::count_trailing_zeroes_non_zero32(last));
@@ -94,10 +94,8 @@ td::Result<Ref<DataCell>> CellSerializationInfo::create_data_cell(td::Slice cell
   for (int k = 0; k < refs_cnt; k++) {
     cb.store_ref(std::move(refs[k]));
   }
-  auto res = cb.finalize_novm(special);
-  if (res.is_null()) {
-    return td::Status::Error("CellBuilder::finalize failed");
-  }
+  TRY_RESULT(res, cb.finalize_novm_nothrow(special));
+  CHECK(!res.is_null());
   if (res->is_special() != special) {
     return td::Status::Error("is_special mismatch");
   }
@@ -391,15 +389,6 @@ td::uint64 BagOfCells::compute_sizes(int mode, int& r_size, int& o_size) {
     r_size = o_size = 0;
     return 0;
   }
-  if (!(mode & Mode::WithIndex)) {
-    if (rs > 2 || os > 4) {
-      rs = std::max(3, rs);
-      os = 8;
-      data_bytes_adj = data_bytes + (unsigned long long)int_refs * rs + hashes;
-    } else {
-      os = 4;
-    }
-  }
   r_size = rs;
   o_size = os;
   return data_bytes_adj;
@@ -663,10 +652,10 @@ long long BagOfCells::Info::parse_serialized_header(const td::Slice& slice) {
   ptr += 6;
   sz -= 6;
   if (sz < ref_byte_size) {
-    return -(int)roots_offset;
+    return -static_cast<int>(roots_offset);
   }
   cell_count = (int)read_ref(ptr);
-  if (cell_count < 0) {
+  if (cell_count <= 0) {
     cell_count = -1;
     return 0;
   }
@@ -680,7 +669,7 @@ long long BagOfCells::Info::parse_serialized_header(const td::Slice& slice) {
   }
   index_offset = roots_offset;
   if (magic == boc_generic) {
-    index_offset += root_count * ref_byte_size;
+    index_offset += (long long)root_count * ref_byte_size;
     has_roots = true;
   } else {
     if (root_count != 1) {
@@ -699,11 +688,17 @@ long long BagOfCells::Info::parse_serialized_header(const td::Slice& slice) {
     return 0;
   }
   if (sz < 3 * ref_byte_size + offset_byte_size) {
-    return -(int)roots_offset;
+    return -static_cast<int>(roots_offset);
   }
   data_size = read_offset(ptr + 3 * ref_byte_size);
   if (data_size > ((unsigned long long)cell_count << 10)) {
     return 0;
+  }
+  if (data_size > (1ull << 40)) {
+    return 0;  // bag of cells with more than 1TiB data is unlikely
+  }
+  if (data_size < cell_count * (2ull + ref_byte_size) - ref_byte_size) {
+    return 0;  // invalid header, too many cells for this amount of data bytes
   }
   valid = true;
   total_size = data_offset + data_size + (has_crc32c ? 4 : 0);
@@ -756,14 +751,13 @@ td::Result<td::Ref<vm::DataCell>> BagOfCells::deserialize_cell(int idx, td::Slic
   return cell_info.create_data_cell(cell_slice, refs);
 }
 
-td::Result<long long> BagOfCells::deserialize(const td::Slice& data) {
+td::Result<long long> BagOfCells::deserialize(const td::Slice& data, int max_roots) {
   clear();
   long long size_est = info.parse_serialized_header(data);
   //LOG(INFO) << "estimated size " << size_est << ", true size " << data.size();
   if (size_est == 0) {
     return td::Status::Error(PSLICE() << "cannot deserialize bag-of-cells: invalid header, error " << size_est);
   }
-
   if (size_est < 0) {
     //LOG(ERROR) << "cannot deserialize bag-of-cells: not enough bytes (" << data.size() << " present, " << -size_est
     //<< " required)";
@@ -776,6 +770,9 @@ td::Result<long long> BagOfCells::deserialize(const td::Slice& data) {
     return -size_est;
   }
   //LOG(INFO) << "estimated size " << size_est << ", true size " << data.size();
+  if (info.root_count > max_roots) {
+    return td::Status::Error("Bag-of-cells has more root cells than expected");
+  }
   if (info.has_crc32c) {
     unsigned crc_computed = td::crc32c(td::Slice{data.ubegin(), data.uend() - 4});
     unsigned crc_stored = td::as<unsigned>(data.uend() - 4);
@@ -915,7 +912,7 @@ td::Result<Ref<Cell>> std_boc_deserialize(td::Slice data, bool can_be_empty) {
     return Ref<Cell>();
   }
   BagOfCells boc;
-  auto res = boc.deserialize(data);
+  auto res = boc.deserialize(data, 1);
   if (res.is_error()) {
     return res.move_as_error();
   }
@@ -932,12 +929,12 @@ td::Result<Ref<Cell>> std_boc_deserialize(td::Slice data, bool can_be_empty) {
   return std::move(root);
 }
 
-td::Result<std::vector<Ref<Cell>>> std_boc_deserialize_multi(td::Slice data) {
+td::Result<std::vector<Ref<Cell>>> std_boc_deserialize_multi(td::Slice data, int max_roots) {
   if (data.empty()) {
     return std::vector<Ref<Cell>>{};
   }
   BagOfCells boc;
-  auto res = boc.deserialize(data);
+  auto res = boc.deserialize(data, max_roots);
   if (res.is_error()) {
     return res.move_as_error();
   }
@@ -988,27 +985,27 @@ td::Result<td::BufferSlice> std_boc_serialize_multi(std::vector<Ref<Cell>> roots
  * 
  */
 
-bool CellStorageStat::compute_used_storage(Ref<vm::CellSlice> cs_ref, bool kill_dup, bool skip_count_root) {
+bool CellStorageStat::compute_used_storage(Ref<vm::CellSlice> cs_ref, bool kill_dup, unsigned skip_count_root) {
   clear();
   return add_used_storage(std::move(cs_ref), kill_dup, skip_count_root) && clear_seen();
 }
 
-bool CellStorageStat::compute_used_storage(const CellSlice& cs, bool kill_dup, bool skip_count_root) {
+bool CellStorageStat::compute_used_storage(const CellSlice& cs, bool kill_dup, unsigned skip_count_root) {
   clear();
   return add_used_storage(cs, kill_dup, skip_count_root) && clear_seen();
 }
 
-bool CellStorageStat::compute_used_storage(CellSlice&& cs, bool kill_dup, bool skip_count_root) {
+bool CellStorageStat::compute_used_storage(CellSlice&& cs, bool kill_dup, unsigned skip_count_root) {
   clear();
   return add_used_storage(std::move(cs), kill_dup, skip_count_root) && clear_seen();
 }
 
-bool CellStorageStat::compute_used_storage(Ref<vm::Cell> cell, bool kill_dup, bool skip_count_root) {
+bool CellStorageStat::compute_used_storage(Ref<vm::Cell> cell, bool kill_dup, unsigned skip_count_root) {
   clear();
   return add_used_storage(std::move(cell), kill_dup, skip_count_root) && clear_seen();
 }
 
-bool CellStorageStat::add_used_storage(Ref<vm::CellSlice> cs_ref, bool kill_dup, bool skip_count_root) {
+bool CellStorageStat::add_used_storage(Ref<vm::CellSlice> cs_ref, bool kill_dup, unsigned skip_count_root) {
   if (cs_ref->is_unique()) {
     return add_used_storage(std::move(cs_ref.unique_write()), kill_dup, skip_count_root);
   } else {
@@ -1016,11 +1013,13 @@ bool CellStorageStat::add_used_storage(Ref<vm::CellSlice> cs_ref, bool kill_dup,
   }
 }
 
-bool CellStorageStat::add_used_storage(const CellSlice& cs, bool kill_dup, bool skip_count_root) {
-  if (!skip_count_root) {
+bool CellStorageStat::add_used_storage(const CellSlice& cs, bool kill_dup, unsigned skip_count_root) {
+  if (!(skip_count_root & 1)) {
     ++cells;
   }
-  bits += cs.size();
+  if (!(skip_count_root & 2)) {
+    bits += cs.size();
+  }
   for (unsigned i = 0; i < cs.size_refs(); i++) {
     if (!add_used_storage(cs.prefetch_ref(i), kill_dup)) {
       return false;
@@ -1029,11 +1028,13 @@ bool CellStorageStat::add_used_storage(const CellSlice& cs, bool kill_dup, bool 
   return true;
 }
 
-bool CellStorageStat::add_used_storage(CellSlice&& cs, bool kill_dup, bool skip_count_root) {
-  if (!skip_count_root) {
+bool CellStorageStat::add_used_storage(CellSlice&& cs, bool kill_dup, unsigned skip_count_root) {
+  if (!(skip_count_root & 1)) {
     ++cells;
   }
-  bits += cs.size();
+  if (!(skip_count_root & 2)) {
+    bits += cs.size();
+  }
   while (cs.size_refs()) {
     if (!add_used_storage(cs.fetch_ref(), kill_dup)) {
       return false;
@@ -1042,7 +1043,7 @@ bool CellStorageStat::add_used_storage(CellSlice&& cs, bool kill_dup, bool skip_
   return true;
 }
 
-bool CellStorageStat::add_used_storage(Ref<vm::Cell> cell, bool kill_dup, bool skip_count_root) {
+bool CellStorageStat::add_used_storage(Ref<vm::Cell> cell, bool kill_dup, unsigned skip_count_root) {
   if (cell.is_null()) {
     return false;
   }
@@ -1128,6 +1129,30 @@ void NewCellStorageStat::dfs(Ref<Cell> cell, bool need_stat, bool need_proof_sta
   while (cs.size_refs()) {
     dfs(cs.fetch_ref(), need_stat, need_proof_stat);
   }
+}
+
+bool VmStorageStat::add_storage(Ref<Cell> cell) {
+  if (cell.is_null() || !check_visited(cell)) {
+    return true;
+  }
+  if (cells >= limit) {
+    return false;
+  }
+  ++cells;
+  bool special;
+  auto cs = load_cell_slice_special(std::move(cell), special);
+  return cs.is_valid() && add_storage(std::move(cs));
+}
+
+bool VmStorageStat::add_storage(const CellSlice& cs) {
+  bits += cs.size();
+  refs += cs.size_refs();
+  for (unsigned i = 0; i < cs.size_refs(); i++) {
+    if (!add_storage(cs.prefetch_ref(i))) {
+      return false;
+    }
+  }
+  return true;
 }
 
 }  // namespace vm

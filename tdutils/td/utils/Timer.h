@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -24,14 +24,22 @@ namespace td {
 
 class Timer {
  public:
-  Timer();
+  Timer() : Timer(false) {
+  }
+  explicit Timer(bool is_paused);
+  Timer(const Timer &other) = default;
+  Timer &operator=(const Timer &other) = default;
 
   double elapsed() const;
+  void pause();
+  void resume();
 
  private:
   friend StringBuilder &operator<<(StringBuilder &string_builder, const Timer &timer);
 
+  double elapsed_{0};
   double start_time_;
+  bool is_paused_{false};
 };
 
 class PerfWarningTimer {

@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -33,7 +33,10 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
     return init_block_id_;
   }
   bool need_monitor(ShardIdFull shard) const override {
-    return check_shard_(shard);
+    return check_shard_(shard, ShardCheckMode::m_monitor);
+  }
+  bool need_validate(ShardIdFull shard) const override {
+    return check_shard_(shard, ShardCheckMode::m_validate);
   }
   bool allow_blockchain_init() const override {
     return allow_blockchain_init_;
@@ -67,7 +70,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
     }
     return false;
   }
-  td::uint32 get_vertical_height(BlockSeqno seqno) const override {
+  td::uint32 get_vertical_seqno(BlockSeqno seqno) const override {
     size_t best = 0;
     for (size_t i = 0; i < hardforks_.size(); i++) {
       if (seqno >= hardforks_[i].seqno()) {
@@ -76,8 +79,28 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
     }
     return static_cast<td::uint32>(best);
   }
+  td::uint32 get_maximal_vertical_seqno() const override {
+    return td::narrow_cast<td::uint32>(hardforks_.size());
+  }
+  td::uint32 get_last_fork_masterchain_seqno() const override {
+    return hardforks_.size() ? hardforks_.rbegin()->seqno() : 0;
+  }
+  std::vector<BlockIdExt> get_hardforks() const override {
+    return hardforks_;
+  }
   td::uint32 get_filedb_depth() const override {
     return db_depth_;
+  }
+  bool check_unsafe_resync_allowed(CatchainSeqno seqno) const override {
+    return unsafe_catchains_.count(seqno) > 0;
+  }
+  td::uint32 check_unsafe_catchain_rotate(BlockSeqno seqno, CatchainSeqno cc_seqno) const override {
+    auto it = unsafe_catchain_rotates_.find(cc_seqno);
+    if (it == unsafe_catchain_rotates_.end()) {
+      return 0;
+    } else {
+      return it->second.first <= seqno ? it->second.second : 0;
+    }
   }
 
   void set_zero_block_id(BlockIdExt block_id) override {
@@ -86,7 +109,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   void set_init_block_id(BlockIdExt block_id) override {
     init_block_id_ = block_id;
   }
-  void set_shard_check_function(std::function<bool(ShardIdFull)> check_shard) override {
+  void set_shard_check_function(std::function<bool(ShardIdFull, ShardCheckMode)> check_shard) override {
     check_shard_ = std::move(check_shard);
   }
   void set_allow_blockchain_init(bool value) override {
@@ -117,15 +140,21 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
     CHECK(value <= 32);
     db_depth_ = value;
   }
+  void add_unsafe_resync_catchain(CatchainSeqno seqno) override {
+    unsafe_catchains_.insert(seqno);
+  }
+  void add_unsafe_catchain_rotate(BlockSeqno seqno, CatchainSeqno cc_seqno, td::uint32 value) override {
+    unsafe_catchain_rotates_[cc_seqno] = std::make_pair(seqno, value);
+  }
 
   ValidatorManagerOptionsImpl *make_copy() const override {
     return new ValidatorManagerOptionsImpl(*this);
   }
 
   ValidatorManagerOptionsImpl(BlockIdExt zero_block_id, BlockIdExt init_block_id,
-                              std::function<bool(ShardIdFull)> check_shard, bool allow_blockchain_init,
+                              std::function<bool(ShardIdFull, ShardCheckMode)> check_shard, bool allow_blockchain_init,
                               td::ClocksBase::Duration sync_blocks_before, td::ClocksBase::Duration block_ttl,
-                              td::ClocksBase::Duration archive_ttl, td::ClocksBase::Duration state_ttl,
+                              td::ClocksBase::Duration state_ttl, td::ClocksBase::Duration archive_ttl,
                               td::ClocksBase::Duration key_proof_ttl, bool initial_sync_disabled)
       : zero_block_id_(zero_block_id)
       , init_block_id_(init_block_id)
@@ -142,7 +171,7 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
  private:
   BlockIdExt zero_block_id_;
   BlockIdExt init_block_id_;
-  std::function<bool(ShardIdFull)> check_shard_;
+  std::function<bool(ShardIdFull, ShardCheckMode)> check_shard_;
   bool allow_blockchain_init_;
   td::ClocksBase::Duration sync_blocks_before_;
   td::ClocksBase::Duration block_ttl_;
@@ -152,6 +181,8 @@ struct ValidatorManagerOptionsImpl : public ValidatorManagerOptions {
   bool initial_sync_disabled_;
   std::vector<BlockIdExt> hardforks_;
   td::uint32 db_depth_ = 2;
+  std::set<CatchainSeqno> unsafe_catchains_;
+  std::map<CatchainSeqno, std::pair<BlockSeqno, td::uint32>> unsafe_catchain_rotates_;
 };
 
 }  // namespace validator

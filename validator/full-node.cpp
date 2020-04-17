@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include "full-node.hpp"
 #include "ton/ton-shard.h"
@@ -99,11 +99,10 @@ void FullNodeImpl::initial_read_complete(BlockHandle top_handle) {
 }
 
 void FullNodeImpl::add_shard(ShardIdFull shard) {
-  LOG(WARNING) << "add shard " << shard;
   while (true) {
     if (shards_.count(shard) == 0) {
       shards_.emplace(shard, FullNodeShard::create(shard, local_id_, adnl_id_, zero_state_file_hash_, keyring_, adnl_,
-                                                   rldp_, overlays_, validator_manager_));
+                                                   rldp_, overlays_, validator_manager_, client_));
       if (all_validators_.size() > 0) {
         td::actor::send_closure(shards_[shard], &FullNodeShard::update_validators, all_validators_, sign_cert_by_);
       }
@@ -230,7 +229,16 @@ void FullNodeImpl::get_next_key_blocks(BlockIdExt block_id, td::Timestamp timeou
   td::actor::send_closure(shard, &FullNodeShard::get_next_key_blocks, block_id, timeout, std::move(promise));
 }
 
+void FullNodeImpl::download_archive(BlockSeqno masterchain_seqno, std::string tmp_dir, td::Timestamp timeout,
+                                    td::Promise<std::string> promise) {
+  auto shard = get_shard(ShardIdFull{masterchainId});
+  CHECK(!shard.empty());
+  td::actor::send_closure(shard, &FullNodeShard::download_archive, masterchain_seqno, std::move(tmp_dir), timeout,
+                          std::move(promise));
+}
+
 td::actor::ActorId<FullNodeShard> FullNodeImpl::get_shard(ShardIdFull shard) {
+  add_shard(ShardIdFull{shard.workchain, shardIdAll});
   while (shards_.count(shard) == 0) {
     if (shard.shard == shardIdAll) {
       return td::actor::ActorId<FullNodeShard>{};
@@ -392,6 +400,11 @@ void FullNodeImpl::start_up() {
                              td::Promise<std::vector<BlockIdExt>> promise) override {
       td::actor::send_closure(id_, &FullNodeImpl::get_next_key_blocks, block_id, timeout, std::move(promise));
     }
+    void download_archive(BlockSeqno masterchain_seqno, std::string tmp_dir, td::Timestamp timeout,
+                          td::Promise<std::string> promise) override {
+      td::actor::send_closure(id_, &FullNodeImpl::download_archive, masterchain_seqno, std::move(tmp_dir), timeout,
+                              std::move(promise));
+    }
 
     void new_key_block(BlockHandle handle) override {
       td::actor::send_closure(id_, &FullNodeImpl::new_key_block, std::move(handle));
@@ -413,7 +426,8 @@ FullNodeImpl::FullNodeImpl(PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id
                            td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
                            td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<dht::Dht> dht,
                            td::actor::ActorId<overlay::Overlays> overlays,
-                           td::actor::ActorId<ValidatorManagerInterface> validator_manager, std::string db_root)
+                           td::actor::ActorId<ValidatorManagerInterface> validator_manager,
+                           td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root)
     : local_id_(local_id)
     , adnl_id_(adnl_id)
     , zero_state_file_hash_(zero_state_file_hash)
@@ -423,6 +437,7 @@ FullNodeImpl::FullNodeImpl(PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id
     , dht_(dht)
     , overlays_(overlays)
     , validator_manager_(validator_manager)
+    , client_(client)
     , db_root_(db_root) {
   add_shard(ShardIdFull{masterchainId});
 }
@@ -434,9 +449,9 @@ td::actor::ActorOwn<FullNode> FullNode::create(ton::PublicKeyHash local_id, adnl
                                                td::actor::ActorId<dht::Dht> dht,
                                                td::actor::ActorId<overlay::Overlays> overlays,
                                                td::actor::ActorId<ValidatorManagerInterface> validator_manager,
-                                               std::string db_root) {
+                                               td::actor::ActorId<adnl::AdnlExtClient> client, std::string db_root) {
   return td::actor::create_actor<FullNodeImpl>("fullnode", local_id, adnl_id, zero_state_file_hash, keyring, adnl, rldp,
-                                               dht, overlays, validator_manager, db_root);
+                                               dht, overlays, validator_manager, client, db_root);
 }
 
 }  // namespace fullnode

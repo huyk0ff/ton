@@ -23,7 +23,7 @@
     exception statement from your version. If you delete this exception statement 
     from all source files in the program, then also delete it here.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include "vm/stack.hpp"
 #include <cassert>
@@ -132,9 +132,7 @@ int main(int argc, char* const argv[]) {
 
   if (!no_env) {
     const char* path = std::getenv("FIFTPATH");
-    if (path) {
-      parse_include_path_set(path ? path : "/usr/lib/fift", source_include_path);
-    }
+    parse_include_path_set(path ? path : "/usr/lib/fift", source_include_path);
   }
   std::string current_dir;
   auto r_current_dir = td::realpath(".");
@@ -158,7 +156,7 @@ int main(int argc, char* const argv[]) {
   }
 
   fift::init_words_common(config.dictionary);
-  fift::init_words_vm(config.dictionary);
+  fift::init_words_vm(config.dictionary, true);  // enable vm debug
   fift::init_words_ton(config.dictionary);
 
   if (script_mode) {

@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include <algorithm>
 #include <string>
@@ -572,7 +572,7 @@ TEST(bits256_scan, main) {
 }
 
 bool check_exp(std::ostream& stream, const td::NegExpBinTable& tab, double x) {
-  long long xx = lround(x * (1LL << 52));
+  long long xx = llround(x * (1LL << 52));
   td::BigInt256 yy;
   if (!tab.nexpf(yy, -xx, 52)) {
     stream << "cannot compute exp(" << x << ") = exp(" << xx << " * 2^(-52))" << std::endl;
@@ -580,7 +580,7 @@ bool check_exp(std::ostream& stream, const td::NegExpBinTable& tab, double x) {
   }
   double y = yy.to_double() * exp2(-252);
   double y0 = exp(x);
-  bool ok = (abs(y - y0) < 1e-15);
+  bool ok = (fabs(y - y0) < 1e-15);
   if (!ok) {
     stream << "exp(" << x << ") = exp(" << xx << " * 2^(-52)) = " << yy << " / 2^252 = " << y << " (correct value is "
            << y0 << ") " << (ok ? "match" : "incorrect") << std::endl;

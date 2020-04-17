@@ -14,12 +14,13 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
 #include "full-node.h"
 #include "validator/interfaces/block-handle.h"
+#include "adnl/adnl-ext-client.h"
 
 namespace ton {
 
@@ -54,18 +55,18 @@ class FullNodeShard : public td::actor::Actor {
                                          td::Promise<td::BufferSlice> promise) = 0;
   virtual void get_next_key_blocks(BlockIdExt block_id, td::Timestamp timeout,
                                    td::Promise<std::vector<BlockIdExt>> promise) = 0;
+  virtual void download_archive(BlockSeqno masterchain_seqno, std::string tmp_dir, td::Timestamp timeout,
+                                td::Promise<std::string> promise) = 0;
 
   virtual void set_handle(BlockHandle handle, td::Promise<td::Unit> promise) = 0;
 
   virtual void update_validators(std::vector<PublicKeyHash> public_key_hashes, PublicKeyHash local_hash) = 0;
 
-  static td::actor::ActorOwn<FullNodeShard> create(ShardIdFull shard, PublicKeyHash local_id,
-                                                   adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
-                                                   td::actor::ActorId<keyring::Keyring> keyring,
-                                                   td::actor::ActorId<adnl::Adnl> adnl,
-                                                   td::actor::ActorId<rldp::Rldp> rldp,
-                                                   td::actor::ActorId<overlay::Overlays> overlays,
-                                                   td::actor::ActorId<ValidatorManagerInterface> validator_manager);
+  static td::actor::ActorOwn<FullNodeShard> create(
+      ShardIdFull shard, PublicKeyHash local_id, adnl::AdnlNodeIdShort adnl_id, FileHash zero_state_file_hash,
+      td::actor::ActorId<keyring::Keyring> keyring, td::actor::ActorId<adnl::Adnl> adnl,
+      td::actor::ActorId<rldp::Rldp> rldp, td::actor::ActorId<overlay::Overlays> overlays,
+      td::actor::ActorId<ValidatorManagerInterface> validator_manager, td::actor::ActorId<adnl::AdnlExtClient> client);
 };
 
 }  // namespace fullnode

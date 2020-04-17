@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include "statedb.hpp"
 #include "ton/ton-tl.hpp"
@@ -179,11 +179,65 @@ void StateDb::get_async_serializer_state(td::Promise<AsyncSerializerState> promi
                                          static_cast<UnixTime>(obj->last_ts_)});
 }
 
+void StateDb::update_hardforks(std::vector<BlockIdExt> blocks, td::Promise<td::Unit> promise) {
+  auto key = create_hash_tl_object<ton_api::db_state_key_hardforks>();
+
+  std::vector<tl_object_ptr<ton_api::tonNode_blockIdExt>> vec;
+
+  for (auto &e : blocks) {
+    vec.push_back(create_tl_block_id(e));
+  }
+
+  kv_->begin_transaction().ensure();
+  kv_->set(key.as_slice(), create_serialize_tl_object<ton_api::db_state_hardforks>(std::move(vec))).ensure();
+  kv_->commit_transaction();
+
+  promise.set_value(td::Unit());
+}
+
+void StateDb::get_hardforks(td::Promise<std::vector<BlockIdExt>> promise) {
+  auto key = create_hash_tl_object<ton_api::db_state_key_hardforks>();
+
+  std::string value;
+  auto R = kv_->get(key.as_slice(), value);
+  R.ensure();
+  if (R.move_as_ok() == td::KeyValue::GetStatus::NotFound) {
+    promise.set_value(std::vector<BlockIdExt>{});
+    return;
+  }
+  auto F = fetch_tl_object<ton_api::db_state_hardforks>(value, true);
+  F.ensure();
+  auto f = F.move_as_ok();
+
+  std::vector<BlockIdExt> vec;
+  for (auto &e : f->blocks_) {
+    vec.push_back(create_block_id(e));
+  }
+
+  promise.set_value(std::move(vec));
+}
+
 StateDb::StateDb(td::actor::ActorId<RootDb> root_db, std::string db_path) : root_db_(root_db), db_path_(db_path) {
 }
 
 void StateDb::start_up() {
   kv_ = std::make_shared<td::RocksDb>(td::RocksDb::open(db_path_).move_as_ok());
+
+  std::string value;
+  auto R = kv_->get(create_serialize_tl_object<ton_api::db_state_key_dbVersion>(), value);
+  R.ensure();
+  if (R.move_as_ok() == td::KeyValue::GetStatus::Ok) {
+    auto F = fetch_tl_object<ton_api::db_state_dbVersion>(value, true);
+    F.ensure();
+    auto f = F.move_as_ok();
+    CHECK(f->version_ == 2);
+  } else {
+    kv_->begin_transaction().ensure();
+    kv_->set(create_serialize_tl_object<ton_api::db_state_key_dbVersion>(),
+             create_serialize_tl_object<ton_api::db_state_dbVersion>(2))
+        .ensure();
+    kv_->commit_transaction().ensure();
+  }
 }
 
 }  // namespace validator

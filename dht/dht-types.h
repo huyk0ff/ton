@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -89,7 +89,6 @@ class DhtKey {
   }
   DhtKey(PublicKeyHash id, DhtKeyName namestr, td::uint32 idx)
       : id_(std::move(id)), namestr_(std::move(namestr)), idx_(idx) {
-    CHECK(namestr.size() <= max_name_length());
   }
   static td::Result<DhtKey> create(tl_object_ptr<ton_api::dht_key> key);
   td::Status check() const;

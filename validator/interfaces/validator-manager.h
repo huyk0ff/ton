@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -26,6 +26,7 @@
 #include "shard-block.h"
 #include "message-queue.h"
 #include "validator/validator.h"
+#include "liteserver.h"
 
 namespace ton {
 
@@ -127,7 +128,7 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void send_block_broadcast(BlockBroadcast broadcast) = 0;
 
   virtual void update_shard_client_state(BlockIdExt masterchain_block_id, td::Promise<td::Unit> promise) = 0;
-  virtual void get_shard_client_state(td::Promise<BlockIdExt> promise) = 0;
+  virtual void get_shard_client_state(bool from_db, td::Promise<BlockIdExt> promise) = 0;
   virtual void subscribe_to_shard(ShardIdFull shard) = 0;
 
   virtual void update_async_serializer_state(AsyncSerializerState state, td::Promise<td::Unit> promise) = 0;
@@ -146,20 +147,28 @@ class ValidatorManager : public ValidatorManagerInterface {
   virtual void allow_block_candidate_gc(BlockIdExt block_id, td::Promise<bool> promise) = 0;
   virtual void allow_block_info_gc(BlockIdExt block_id, td::Promise<bool> promise) = 0;
 
+  virtual void archive(BlockHandle handle, td::Promise<td::Unit> promise) = 0;
+
   virtual void check_is_hardfork(BlockIdExt block_id, td::Promise<bool> promise) = 0;
-  virtual void get_vertical_height(BlockSeqno seqno, td::Promise<td::uint32> promise) = 0;
+  virtual void get_vertical_seqno(BlockSeqno seqno, td::Promise<td::uint32> promise) = 0;
 
   virtual void update_last_known_key_block(BlockHandle handle, bool send_request) = 0;
   virtual void update_gc_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) = 0;
 
+  virtual void update_shard_client_block_handle(BlockHandle handle, td::Promise<td::Unit> promise) = 0;
+
+  virtual void truncate(td::Ref<MasterchainState> state, td::Promise<td::Unit> promise) = 0;
+
+  virtual void wait_shard_client_state(BlockSeqno seqno, td::Timestamp timeout, td::Promise<td::Unit> promise) = 0;
+
   static bool is_persistent_state(UnixTime ts, UnixTime prev_ts) {
-    return ts / 1024 != prev_ts / 1024;
+    return ts / (1 << 17) != prev_ts / (1 << 17);
   }
   static UnixTime persistent_state_ttl(UnixTime ts) {
-    auto x = ts / 1024;
+    auto x = ts / (1 << 17);
     CHECK(x > 0);
     auto b = td::count_trailing_zeroes32(x);
-    return ts + (2048 << b);
+    return ts + ((1 << 18) << b);
   }
 };
 

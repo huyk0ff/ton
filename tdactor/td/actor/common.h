@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 #include "td/actor/core/Actor.h"
@@ -364,7 +364,7 @@ inline void register_actor_info_ptr(core::ActorInfoPtr actor_info_ptr) {
 }
 
 template <class T, class... ArgsT>
-core::ActorInfoPtr create_actor(core::ActorOptions &options, ArgsT &&... args) {
+core::ActorInfoPtr create_actor(core::ActorOptions &options, ArgsT &&... args) noexcept {
   auto *scheduler_context = core::SchedulerContext::get();
   if (!options.has_scheduler()) {
     options.on_scheduler(scheduler_context->get_scheduler_id());

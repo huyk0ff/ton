@@ -23,7 +23,7 @@
     exception statement from your version. If you delete this exception statement 
     from all source files in the program, then also delete it here.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #pragma once
 
@@ -33,6 +33,8 @@
 #include "validator/manager.h"
 #include "validator/validator.h"
 #include "validator/full-node.h"
+#include "validator/full-node-master.h"
+#include "adnl/adnl-ext-client.h"
 
 #include "td/actor/MultiPromise.h"
 
@@ -41,7 +43,7 @@
 
 enum ValidatorEnginePermissions : td::uint32 { vep_default = 1, vep_modify = 2, vep_unsafe = 4 };
 
-using AdnlCategory = td::int32;
+using AdnlCategory = td::uint8;
 
 struct Config {
   struct Addr {
@@ -67,6 +69,10 @@ struct Config {
     ton::PublicKeyHash key;
     std::map<ton::PublicKeyHash, td::uint32> clients;
   };
+  struct FullNodeSlave {
+    ton::PublicKey key;
+    td::IPAddress addr;
+  };
 
   std::map<ton::PublicKeyHash, td::uint32> keys_refcnt;
   td::uint16 out_port;
@@ -74,7 +80,9 @@ struct Config {
   std::map<ton::PublicKeyHash, AdnlCategory> adnl_ids;
   std::set<ton::PublicKeyHash> dht_ids;
   std::map<ton::PublicKeyHash, Validator> validators;
-  ton::PublicKeyHash full_node;
+  ton::PublicKeyHash full_node = ton::PublicKeyHash::zero();
+  std::vector<FullNodeSlave> full_node_slaves;
+  std::map<td::int32, ton::PublicKeyHash> full_node_masters;
   std::map<td::int32, ton::PublicKeyHash> liteservers;
   std::map<td::int32, Control> controls;
   std::set<ton::PublicKeyHash> gc;
@@ -96,6 +104,8 @@ struct Config {
   td::Result<bool> config_add_validator_adnl_id(ton::PublicKeyHash perm_key, ton::PublicKeyHash adnl_id,
                                                 ton::UnixTime expire_at);
   td::Result<bool> config_add_full_node_adnl_id(ton::PublicKeyHash id);
+  td::Result<bool> config_add_full_node_slave(td::IPAddress addr, ton::PublicKey id);
+  td::Result<bool> config_add_full_node_master(td::int32 port, ton::PublicKeyHash id);
   td::Result<bool> config_add_lite_server(ton::PublicKeyHash key, td::int32 port);
   td::Result<bool> config_add_control_interface(ton::PublicKeyHash key, td::int32 port);
   td::Result<bool> config_add_control_process(ton::PublicKeyHash key, td::int32 port, ton::PublicKeyHash id,
@@ -130,7 +140,9 @@ class ValidatorEngine : public td::actor::Actor {
   ton::PublicKeyHash default_dht_node_ = ton::PublicKeyHash::zero();
   td::actor::ActorOwn<ton::overlay::Overlays> overlay_manager_;
   td::actor::ActorOwn<ton::validator::ValidatorManagerInterface> validator_manager_;
+  td::actor::ActorOwn<ton::adnl::AdnlExtClient> full_node_client_;
   td::actor::ActorOwn<ton::validator::fullnode::FullNode> full_node_;
+  std::map<td::uint16, td::actor::ActorOwn<ton::validator::fullnode::FullNodeMaster>> full_node_masters_;
   td::actor::ActorOwn<ton::adnl::AdnlExtServer> control_ext_server_;
 
   std::string local_config_ = "";
@@ -188,11 +200,16 @@ class ValidatorEngine : public td::actor::Actor {
   bool started_keyring_ = false;
   bool started_ = false;
 
+  std::set<ton::CatchainSeqno> unsafe_catchains_;
+
  public:
-  static constexpr td::uint32 max_cat() {
-    return 256;
+  static constexpr td::uint8 max_cat() {
+    return 250;
   }
 
+  void add_unsafe_catchain(ton::CatchainSeqno seq) {
+    unsafe_catchains_.insert(seq);
+  }
   void set_local_config(std::string str);
   void set_global_config(std::string str);
   void set_fift_dir(std::string str) {
@@ -266,12 +283,17 @@ class ValidatorEngine : public td::actor::Actor {
   void start_control_interface();
   void started_control_interface(td::actor::ActorOwn<ton::adnl::AdnlExtServer> control_ext_server);
 
+  void start_full_node_masters();
+  void started_full_node_masters();
+
   void started();
 
   void alarm() override;
   void run();
 
-  void try_add_adnl_node(ton::PublicKeyHash pub, td::int32 cat, td::Promise<td::Unit> promise);
+  void get_current_validator_perm_key(td::Promise<std::pair<ton::PublicKey, size_t>> promise);
+
+  void try_add_adnl_node(ton::PublicKeyHash pub, AdnlCategory cat, td::Promise<td::Unit> promise);
   void try_add_dht_node(ton::PublicKeyHash pub, td::Promise<td::Unit> promise);
   void try_add_validator_permanent_key(ton::PublicKeyHash key_hash, td::uint32 election_date, td::uint32 ttl,
                                        td::Promise<td::Unit> promise);
@@ -361,6 +383,8 @@ class ValidatorEngine : public td::actor::Actor {
                          ton::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   void run_control_query(ton::ton_api::engine_validator_checkDhtServers &query, td::BufferSlice data,
                          ton::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
+  void run_control_query(ton::ton_api::engine_validator_createProposalVote &query, td::BufferSlice data,
+                         ton::PublicKeyHash src, td::uint32 perm, td::Promise<td::BufferSlice> promise);
   template <class T>
   void run_control_query(T &query, td::BufferSlice data, ton::PublicKeyHash src, td::uint32 perm,
                          td::Promise<td::BufferSlice> promise) {
@@ -370,4 +394,3 @@ class ValidatorEngine : public td::actor::Actor {
   void process_control_query(td::uint16 port, ton::adnl::AdnlNodeIdShort src, ton::adnl::AdnlNodeIdShort dst,
                              td::BufferSlice data, td::Promise<td::BufferSlice> promise);
 };
-

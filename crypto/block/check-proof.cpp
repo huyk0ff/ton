@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include "check-proof.h"
 #include "block/block.h"
@@ -25,14 +25,14 @@
 #include "ton/ton-shard.h"
 
 #include "vm/cells/MerkleProof.h"
-#include "openssl/digest.h"
+#include "openssl/digest.hpp"
 #include "Ed25519.h"
 
 namespace block {
 using namespace std::literals::string_literals;
 
 td::Status check_block_header_proof(td::Ref<vm::Cell> root, ton::BlockIdExt blkid, ton::Bits256* store_shard_hash_to,
-                                    bool check_state_hash) {
+                                    bool check_state_hash, td::uint32* save_utime, ton::LogicalTime* save_lt) {
   ton::RootHash vhash{root->get_hash().bits()};
   if (vhash != blkid.root_hash) {
     return td::Status::Error(PSTRING() << " block header for block " << blkid.to_str() << " has incorrect root hash "
@@ -46,6 +46,12 @@ td::Status check_block_header_proof(td::Ref<vm::Cell> root, ton::BlockIdExt blki
   block::gen::BlockInfo::Record info;
   if (!(tlb::unpack_cell(root, blk) && tlb::unpack_cell(blk.info, info))) {
     return td::Status::Error(std::string{"cannot unpack header for block "} + blkid.to_str());
+  }
+  if (save_utime) {
+    *save_utime = info.gen_utime;
+  }
+  if (save_lt) {
+    *save_lt = info.end_lt;
   }
   if (store_shard_hash_to) {
     vm::CellSlice upd_cs{vm::NoVmSpec(), blk.state_update};
@@ -153,7 +159,8 @@ td::Status check_shard_proof(ton::BlockIdExt blk, ton::BlockIdExt shard_blk, td:
 }
 
 td::Status check_account_proof(td::Slice proof, ton::BlockIdExt shard_blk, const block::StdAddress& addr,
-                               td::Ref<vm::Cell> root, ton::LogicalTime* last_trans_lt, ton::Bits256* last_trans_hash) {
+                               td::Ref<vm::Cell> root, ton::LogicalTime* last_trans_lt, ton::Bits256* last_trans_hash,
+                               td::uint32* save_utime, ton::LogicalTime* save_lt) {
   TRY_RESULT_PREFIX(Q_roots, vm::std_boc_deserialize_multi(std::move(proof)), "cannot deserialize account proof");
   if (Q_roots.size() != 2) {
     return td::Status::Error(PSLICE() << "account state proof must have exactly two roots");
@@ -169,9 +176,9 @@ td::Status check_account_proof(td::Slice proof, ton::BlockIdExt shard_blk, const
       return td::Status::Error("account state proof is invalid");
     }
     ton::Bits256 state_hash = state_root->get_hash().bits();
-    TRY_STATUS_PREFIX(
-        check_block_header_proof(vm::MerkleProof::virtualize(std::move(Q_roots[0]), 1), shard_blk, &state_hash, true),
-        "error in account shard block header proof : ");
+    TRY_STATUS_PREFIX(check_block_header_proof(vm::MerkleProof::virtualize(std::move(Q_roots[0]), 1), shard_blk,
+                                               &state_hash, true, save_utime, save_lt),
+                      "error in account shard block header proof : ");
     block::gen::ShardStateUnsplit::Record sstate;
     if (!(tlb::unpack_cell(std::move(state_root), sstate))) {
       return td::Status::Error("cannot unpack state header");
@@ -212,10 +219,18 @@ td::Status check_account_proof(td::Slice proof, ton::BlockIdExt shard_blk, const
 }
 
 td::Result<AccountState::Info> AccountState::validate(ton::BlockIdExt ref_blk, block::StdAddress addr) const {
-  TRY_RESULT_PREFIX(root, vm::std_boc_deserialize(state.as_slice(), true), "cannot deserialize account state");
+  TRY_RESULT_PREFIX(true_root, vm::std_boc_deserialize(state.as_slice(), true), "cannot deserialize account state");
+  Ref<vm::Cell> root;
 
-  LOG(INFO) << "got account state for " << addr << " with respect to blocks " << blk.to_str()
-            << (shard_blk == blk ? "" : std::string{" and "} + shard_blk.to_str());
+  if (is_virtualized && true_root.not_null()) {
+    root = vm::MerkleProof::virtualize(true_root, 1);
+    if (root.is_null()) {
+      return td::Status::Error("account state proof is invalid");
+    }
+  } else {
+    root = true_root;
+  }
+
   if (blk != ref_blk && ref_blk.id.seqno != ~0U) {
     return td::Status::Error(PSLICE() << "obtained getAccountState() for a different reference block " << blk.to_str()
                                       << " instead of requested " << ref_blk.to_str());
@@ -233,9 +248,10 @@ td::Result<AccountState::Info> AccountState::validate(ton::BlockIdExt ref_blk, b
   TRY_STATUS(block::check_shard_proof(blk, shard_blk, shard_proof.as_slice()));
 
   Info res;
-  TRY_STATUS(
-      block::check_account_proof(proof.as_slice(), shard_blk, addr, root, &res.last_trans_lt, &res.last_trans_hash));
+  TRY_STATUS(block::check_account_proof(proof.as_slice(), shard_blk, addr, root, &res.last_trans_lt,
+                                        &res.last_trans_hash, &res.gen_utime, &res.gen_lt));
   res.root = std::move(root);
+  res.true_root = std::move(true_root);
 
   return res;
 }
@@ -258,6 +274,7 @@ td::Result<Transaction::Info> Transaction::validate() {
   }
   Info res;
   res.blkid = blkid;
+  res.now = trans.now;
   res.prev_trans_lt = trans.prev_trans_lt;
   res.prev_trans_hash = trans.prev_trans_hash;
   res.transaction = root;
@@ -281,6 +298,8 @@ td::Result<TransactionList::Info> TransactionList::validate() const {
   Info res;
   auto current_lt = lt;
   auto current_hash = hash;
+  res.lt = lt;
+  res.hash = hash;
   for (auto& root : list) {
     const auto& blkid = blkids[c++];
     Transaction transaction;
@@ -417,7 +436,7 @@ td::Status BlockProofLink::validate(td::uint32* save_utime) const {
   }
 }
 
-td::Status BlockProofChain::validate() {
+td::Status BlockProofChain::validate(td::CancellationToken cancellation_token) {
   valid = false;
   has_key_block = false;
   has_utime = false;
@@ -442,6 +461,9 @@ td::Status BlockProofChain::validate() {
       return td::Status::Error(PSTRING() << "link #" << i << " in a BlockProofChain begins with block "
                                          << link.from.to_str() << " but the previous link ends at different block "
                                          << cur.to_str());
+    }
+    if (cancellation_token) {
+      return td::Status::Error("Cancelled");
     }
     auto err = link.validate(&last_utime);
     if (err.is_error()) {

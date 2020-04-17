@@ -14,7 +14,7 @@
     You should have received a copy of the GNU Lesser General Public License
     along with TON Blockchain Library.  If not, see <http://www.gnu.org/licenses/>.
 
-    Copyright 2017-2019 Telegram Systems LLP
+    Copyright 2017-2020 Telegram Systems LLP
 */
 #include "td/utils/Timer.h"
 
@@ -25,15 +25,40 @@
 
 namespace td {
 
-Timer::Timer() : start_time_(Time::now()) {
+Timer::Timer(bool is_paused) : is_paused_(is_paused) {
+  if (is_paused_) {
+    start_time_ = 0;
+  } else {
+    start_time_ = Time::now();
+  }
+}
+
+void Timer::pause() {
+  if (is_paused_) {
+    return;
+  }
+  elapsed_ += Time::now() - start_time_;
+  is_paused_ = true;
+}
+
+void Timer::resume() {
+  if (!is_paused_) {
+    return;
+  }
+  start_time_ = Time::now();
+  is_paused_ = false;
 }
 
 double Timer::elapsed() const {
-  return Time::now() - start_time_;
+  double res = elapsed_;
+  if (!is_paused_) {
+    res += Time::now() - start_time_;
+  }
+  return res;
 }
 
 StringBuilder &operator<<(StringBuilder &string_builder, const Timer &timer) {
-  return string_builder << "in " << Time::now() - timer.start_time_;
+  return string_builder << format::as_time(timer.elapsed());
 }
 
 PerfWarningTimer::PerfWarningTimer(string name, double max_duration)

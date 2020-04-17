@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.0.2 FATAL_ERROR)
 
+option(TDUTILS_MIME_TYPE "Generate mime types conversion (gperf is required)" ON)
+
 if (WIN32)
   if (WINGETOPT_FOUND)
     set(TD_HAVE_GETOPT 1)
@@ -54,6 +56,7 @@ set(TDUTILS_SOURCE
   td/utils/port/MemoryMapping.cpp
   td/utils/port/path.cpp
   td/utils/port/PollFlags.cpp
+  td/utils/port/rlimit.cpp
   td/utils/port/ServerSocketFd.cpp
   td/utils/port/signals.cpp
   td/utils/port/sleep.cpp
@@ -96,7 +99,6 @@ set(TDUTILS_SOURCE
   td/utils/JsonBuilder.cpp
   td/utils/logging.cpp
   td/utils/misc.cpp
-  td/utils/MimeType.cpp
   td/utils/MpmcQueue.cpp
   td/utils/OptionsParser.cpp
   td/utils/Random.cpp
@@ -128,6 +130,7 @@ set(TDUTILS_SOURCE
   td/utils/port/Poll.h
   td/utils/port/PollBase.h
   td/utils/port/PollFlags.h
+  td/utils/port/rlimit.h
   td/utils/port/RwMutex.h
   td/utils/port/ServerSocketFd.h
   td/utils/port/signals.h
@@ -202,7 +205,6 @@ set(TDUTILS_SOURCE
   td/utils/List.h
   td/utils/logging.h
   td/utils/MemoryLog.h
-  td/utils/MimeType.h
   td/utils/misc.h
   td/utils/MovableValue.h
   td/utils/MpmcQueue.h
@@ -228,6 +230,7 @@ set(TDUTILS_SOURCE
   td/utils/SpinLock.h
   td/utils/StackAllocator.h
   td/utils/Status.h
+  td/utils/StealingQueue.h
   td/utils/Storer.h
   td/utils/StorerBase.h
   td/utils/StringBuilder.h
@@ -251,6 +254,14 @@ set(TDUTILS_SOURCE
   td/utils/VectorQueue.h
 )
 
+if (TDUTILS_MIME_TYPE)
+  set(TDUTILS_SOURCE
+    ${TDUTILS_SOURCE}
+    td/utils/MimeType.cpp
+    td/utils/MimeType.h
+  )
+endif()
+
 set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/buffer.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/ConcurrentHashMap.cpp
@@ -271,6 +282,7 @@ set(TDUTILS_TEST_SOURCE
   ${CMAKE_CURRENT_SOURCE_DIR}/test/pq.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/SharedObjectPool.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/SharedSlice.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/test/StealingQueue.cpp
   ${CMAKE_CURRENT_SOURCE_DIR}/test/variant.cpp
   PARENT_SCOPE
 )
@@ -284,7 +296,7 @@ if (WIN32)
   # target_link_libraries(tdutils PRIVATE ${WS2_32_LIBRARY} ${MSWSOCK_LIBRARY})
   target_link_libraries(tdutils PRIVATE ws2_32 Mswsock Normaliz)
 endif()
-if (NOT CMAKE_CROSSCOMPILING)
+if (NOT CMAKE_CROSSCOMPILING AND TDUTILS_MIME_TYPE)
   add_dependencies(tdutils tdmime_auto)
 endif()
 
